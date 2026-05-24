@@ -1,107 +1,107 @@
-# Analysis of a BYOVD-based Kernel Driver Loading Chain
+# Analyse d'une chaîne de chargement de driver kernel par BYOVD
 
-**Author:** Clovis Lagorce
-**Date:** May 2026
-**Contact:** lagorceclovis@gmail.com
-**Type:** Independent security research — Responsible Disclosure
+**Auteur :** Clovis Lagorce
+**Date :** Mai 2026
+**Contact :** lagorceclovis@gmail.com
+**Cadre :** Recherche personnelle en sécurité — Responsible Disclosure
 
-> (c) 2026 Clovis Lagorce. All rights reserved.
-> Partial or full reproduction without written permission is prohibited.
-> This document was timestamped prior to publication.
-
----
-
-## Disclaimer
-
-This analysis was conducted on a binary obtained for research purposes only. No malicious use was made of the techniques described. Findings were responsibly disclosed to the affected vendor. Specific technical indicators (hashes, URLs, pseudonyms, driver names) have been intentionally omitted from this public write-up and reserved for the private disclosure report.
+> © 2026 Clovis Lagorce. Tous droits réservés.
+> Reproduction partielle ou totale interdite sans autorisation écrite.
+> Ce document a été horodaté avant publication.
 
 ---
 
-## Abstract
+## Avertissement
 
-This write-up documents the analysis of a Windows x86-64 binary protected by VMProtect. The analysis revealed a multi-stage kernel driver loading chain leveraging a Bring Your Own Vulnerable Driver (BYOVD) technique to bypass Driver Signature Enforcement (DSE), ultimately loading a custom unsigned kernel-mode driver. The malicious driver sample was undetected by all major antivirus engines at the time of submission. Additionally, the binary was found to implement physical memory access techniques to bypass a commercial anti-cheat solution operating in user-mode.
-
-This document distinguishes between confirmed observations, reasonable inferences, and unverified hypotheses.
+Cette analyse a été conduite sur un binaire obtenu à des fins de recherche uniquement. Aucune utilisation malveillante des techniques décrites n'a été réalisée. Les découvertes ont été transmises à l'éditeur concerné dans le cadre d'un responsible disclosure. Les indicateurs techniques spécifiques (hashes, URLs, pseudonymes, noms de drivers) ont été volontairement omis de ce document public et réservés au rapport de divulgation privé.
 
 ---
 
-## Environment & Tooling
+## Résumé
 
-| Tool | Purpose |
+Ce write-up documente l'analyse d'un binaire Windows x86-64 protégé par VMProtect. L'analyse a révélé une chaîne de chargement de driver kernel en plusieurs étapes, exploitant une technique BYOVD (Bring Your Own Vulnerable Driver) pour contourner le DSE (Driver Signature Enforcement), et chargeant in fine un driver kernel custom non signé. Le sample malveillant était inconnu de l'ensemble des moteurs antivirus au moment de la soumission. Le binaire présente par ailleurs des indicateurs cohérents avec des techniques d'accès mémoire physique destinées à contourner une solution anti-cheat commerciale opérant en user-mode.
+
+Ce document distingue explicitement les observations confirmées, les inférences raisonnables, et les hypothèses non vérifiées.
+
+---
+
+## Environnement et outils
+
+| Outil | Usage |
 |---|---|
-| IDA Free 8.x | Static analysis, string extraction, cross-references |
-| x64dbg (latest) | Dynamic analysis, process attachment, memory dump |
-| ScyllaHide plugin | Anti-debug bypass (VMProtect profile) |
-| PowerShell 5.1 | Automated string extraction, registry forensics |
-| Python 3.x | Binary parsing, ASCII/UTF-16 string extraction |
-| VirusTotal | Sample reputation lookup |
+| IDA Free 8.x | Analyse statique, extraction de chaînes, références croisées |
+| x64dbg (dernière version) | Analyse dynamique, attachement de processus, dump mémoire |
+| Plugin ScyllaHide | Contournement anti-debug (profil VMProtect) |
+| PowerShell 5.1 | Extraction automatisée de chaînes, forensique registre |
+| Python 3.x | Parsing binaire, extraction ASCII/UTF-16 |
+| VirusTotal | Recherche de réputation du sample |
 
-Analysis was performed on an isolated Windows 10 x64 system.
+L'analyse a été conduite sur un système Windows 10 x64 isolé.
 
 ---
 
-## 1. Static Analysis
+## 1. Analyse statique
 
 ### 1.1 Observations
 
-The binary is approximately 12 MB and targets the x86-64 architecture. Upon loading in IDA Free, the auto-analysis enters a loop over a specific address range, preventing normal completion. This behavior is consistent with VMProtect virtualization, which replaces native instructions with a proprietary bytecode executed by an embedded virtual machine.
+Le binaire fait environ 12 MB et cible l'architecture x86-64. Lors du chargement dans IDA Free, l'auto-analyse entre en boucle sur une plage d'adresses particulière, empêchant toute complétion normale. Ce comportement est cohérent avec la virtualisation VMProtect, qui substitue les instructions natives par un bytecode propriétaire exécuté par une machine virtuelle embarquée.
 
-Attempting Hex-Rays decompilation on the identified entry function fails with:
+La tentative de décompilation Hex-Rays sur la fonction d'entrée identifiée échoue avec le message suivant :
 
 ```
 Error: stack frame is too big
 ```
 
-Inspection of the function metadata reveals an abnormally large declared stack frame. This is a documented VMProtect anti-decompilation technique that artificially inflates the frame size to exceed decompiler limits.
+L'inspection des métadonnées de la fonction révèle un stack frame déclaré anormalement large. Il s'agit d'une technique documentée de VMProtect qui gonfle artificiellement la taille du frame pour dépasser les limites du décompilateur.
 
-### 1.2 Limitations
+### 1.2 Limites de l'analyse statique
 
-Due to VMProtect protection, the following could not be reliably determined through static analysis alone:
+En raison de la protection VMProtect, les éléments suivants n'ont pas pu être déterminés de manière fiable par analyse statique :
 
-- Runtime-decrypted string values (including network endpoints)
-- Precise control flow of virtualized functions
-- Complete list of APIs resolved at runtime
-
----
-
-## 2. Dynamic Analysis
-
-### 2.1 Anti-debug observations
-
-Upon execution under a debugger, the binary displays an alert indicating debugger detection. Three distinct mechanisms were identified:
-
-1. Standard Windows API check (user-mode)
-2. Direct PEB field inspection, bypassing the API layer
-3. Additional checks appearing to be implemented within the VMProtect virtual machine, resistant to standard hooking
-
-### 2.2 Bypass methodology
-
-The binary was launched without a debugger. x64dbg was subsequently attached to the running process with ScyllaHide (VMProtect profile). This approach is effective against checks (1) and (2). Check (3) had already executed by attachment time.
-
-**Note:** This methodology does not guarantee complete anti-debug bypass.
+- Valeurs des chaînes déchiffrées à l'exécution (dont les endpoints réseau)
+- Flot de contrôle précis des fonctions virtualisées
+- Liste complète des APIs résolues à l'exécution
 
 ---
 
-## 3. Memory Acquisition & String Analysis
+## 2. Analyse dynamique
 
-### 3.1 Memory dump
+### 2.1 Observations anti-debug
 
-With the debugger attached and the process awaiting user input, a memory snapshot of the PE image sections was acquired via the x64dbg console. Dump size: approximately 21 MB. At this point, VMProtect-encrypted strings have already been decrypted in memory.
+À l'exécution sous débogueur, le binaire affiche une alerte indiquant la détection d'un débogueur. Trois mécanismes distincts ont été identifiés :
 
-### 3.2 String extraction
+1. Vérification via API Windows standard (user-mode)
+2. Inspection directe du champ PEB.BeingDebugged, contournant la couche API
+3. Vérifications supplémentaires apparemment implémentées au sein de la machine virtuelle VMProtect, résistantes aux approches de hooking classiques
 
-A custom Python script extracted printable ASCII and UTF-16 LE sequences from the dump. Total: approximately 23,700 strings, of which approximately 300 matched security-relevant keywords.
+### 2.2 Méthodologie de contournement
 
-### 3.3 Notable findings
+Le binaire a été lancé sans débogueur. x64dbg a ensuite été attaché au processus en cours d'exécution avec le plugin ScyllaHide configuré en profil VMProtect. Cette approche est efficace contre les mécanismes (1) et (2). Le mécanisme (3) avait déjà été exécuté au moment de l'attachement.
 
-**Debug symbol paths (PDB):**
-Two PDB paths were identified. Their presence indicates debug symbols were not stripped from the binary at build time. The paths suggest two separate components compiled on developer machines, and include pseudonyms embedded in the filesystem paths.
+**Note :** Cette méthodologie ne garantit pas un contournement complet de l'anti-debug.
 
-**Error message strings:**
-Several strings suggest a DSE disabling mechanism with error handling. Messages reference failure conditions for DSE enable/disable operations and a command-line usage string accepting a target driver path.
+---
 
-**Kernel function references:**
-Three logging-style strings were identified:
+## 3. Acquisition mémoire et analyse des chaînes
+
+### 3.1 Dump mémoire
+
+Avec le débogueur attaché et le processus en attente d'une entrée utilisateur, un instantané mémoire des sections PE a été acquis depuis la console x64dbg. Taille du dump : environ 21 MB. À ce stade, les chaînes chiffrées par VMProtect présentes dans ces sections sont déjà déchiffrées en mémoire.
+
+### 3.2 Extraction des chaînes
+
+Un script Python a extrait toutes les séquences imprimables ASCII et UTF-16 LE de longueur minimale 5 depuis le dump. Total extrait : environ 23 700 chaînes, dont environ 300 correspondant à des mots-clés pertinents pour la sécurité.
+
+### 3.3 Découvertes notables
+
+**Chemins de symboles de debug (PDB) :**
+Deux chemins PDB ont été identifiés dans le dump. Les chemins PDB sont des artefacts générés par le compilateur, embarquant le chemin du système de fichiers source au moment de la compilation. Leur présence dans un binaire distribué indique que les symboles de debug n'ont pas été supprimés. Les chemins suggèrent deux composants compilés sur des machines de développement, et incluent des pseudonymes embarqués dans les chemins de fichiers.
+
+**Chaînes de messages d'erreur :**
+Plusieurs chaînes suggèrent la présence d'un mécanisme de désactivation du DSE avec gestion d'erreurs. Les messages référencent des conditions d'échec pour les opérations d'activation et de désactivation du DSE, ainsi qu'une chaîne d'usage en ligne de commande acceptant un chemin de driver cible en argument.
+
+**Références à des fonctions kernel :**
+Trois chaînes de type log/debug ont été identifiées :
 
 ```
 [DRIVER] BruteforceCR3: FOUND CR3=0x%llX
@@ -109,100 +109,100 @@ Three logging-style strings were identified:
 PsGetProcessSectionBaseAddress
 ```
 
-These appear to be debug output embedded in the kernel driver component. Their presence suggests, but does not conclusively prove, runtime use of these techniques.
+Ces chaînes semblent être des messages de debug embarqués dans le composant driver kernel. Leur présence suggère, sans le prouver de manière conclusive, l'utilisation de ces techniques à l'exécution.
 
 ---
 
-## 4. Network Infrastructure
+## 4. Infrastructure réseau
 
-### 4.1 Methodology
+### 4.1 Méthodologie
 
-The license server URL was absent from the memory dump in plaintext, indicating runtime decryption. DNS cache analysis was used:
+L'URL du serveur de licence était absente du dump mémoire en clair, indiquant un déchiffrement à l'exécution. L'analyse du cache DNS a été utilisée en alternative :
 
-1. DNS resolver cache flushed
-2. Binary executed with test input submitted
-3. DNS cache inspected for new entries
+1. Vidage du cache résolveur DNS
+2. Exécution du binaire avec soumission d'une entrée de test
+3. Inspection du cache DNS pour de nouvelles entrées
 
-### 4.2 Findings
+### 4.2 Observations
 
-A subdomain of a known Backend-as-a-Service platform appeared in the cache post-execution. The subdomain contains a unique project identifier that could allow the platform provider to associate the project with a registered account through appropriate legal channels.
+Un sous-domaine d'une plateforme Backend-as-a-Service connue est apparu dans le cache après exécution. Ce sous-domaine contient un identifiant de projet unique qui permettrait au prestataire d'associer le projet à un compte enregistré, facilitant une identification par voie légale appropriée.
 
-Resolved IP addresses belong to a major CDN acting as a reverse proxy, obscuring the backend infrastructure.
+Les adresses IP résolues appartiennent à un prestataire CDN majeur agissant comme proxy inverse, masquant l'infrastructure backend réelle.
 
-*Full domain, project identifier, and IP addresses are omitted and reserved for the private disclosure report.*
+*Le domaine complet, l'identifiant de projet et les adresses IP sont omis et réservés au rapport de divulgation privé.*
 
 ---
 
-## 5. Kernel Driver Loading Chain
+## 5. Chaîne de chargement du driver kernel
 
-### 5.1 Observed artifacts
+### 5.1 Artefacts observés
 
-**Filesystem:**
-- One or more `.sys` files with randomly generated hexadecimal filenames written to a user-writable temporary directory
-- A second `.sys` written to a system temporary directory (subsequently deleted; registry artifacts remain)
+**Système de fichiers :**
+- Un ou plusieurs fichiers `.sys` aux noms hexadécimaux générés aléatoirement, déposés dans un répertoire temporaire accessible en écriture par l'utilisateur
+- Un second fichier `.sys` déposé dans un répertoire temporaire système (supprimé ensuite ; artefacts registre subsistants)
 
-**Registry:**
-Services created under `HKLM\SYSTEM\CurrentControlSet\Services`:
+**Registre Windows :**
+Des services ont été créés sous `HKLM\SYSTEM\CurrentControlSet\Services` pour chaque fichier `.sys`. Propriétés clés :
 
 ```
 Type  : 0x1  (SERVICE_KERNEL_DRIVER)
 Start : 0x4  (SERVICE_DISABLED)
 ```
 
-Setting `Start` to `SERVICE_DISABLED` post-load is consistent with an attempt to reduce forensic visibility.
+La valeur `SERVICE_DISABLED` définie après chargement est cohérente avec une tentative de réduction de la visibilité forensique.
 
-### 5.2 Inferred loading chain
+### 5.2 Chaîne inférée
 
-**The driver loading sequence was not directly observed at runtime** due to a license validation gate preventing full execution with test inputs. The following is inferred from filesystem, registry, and string artifacts.
+**La séquence de chargement des drivers n'a pas été observée directement à l'exécution**, en raison d'une validation de licence empêchant l'exécution complète avec des entrées de test. Ce qui suit est inféré depuis les artefacts système de fichiers, registre, et chaînes extraites.
 
-**Stage 1 — Vulnerable signed driver:**
-A driver signed by a legitimate software vendor is loaded. This driver is referenced in the LOLDrivers database and is known to expose kernel memory read/write primitives via IOCTL. Its legitimate signature allows loading under normal DSE enforcement.
+**Étape 1 — Driver légitime vulnérable :**
+Un driver signé par un éditeur logiciel légitime est chargé. Ce driver est référencé dans la base LOLDrivers et est connu pour exposer des primitives de lecture/écriture mémoire kernel via des interfaces IOCTL. Sa signature légitime lui permet de se charger sous l'application normale du DSE.
 
-**Stage 2 — DSE bypass:**
-The vulnerable driver is used to modify a kernel enforcement variable. This is inferred from extracted error strings referencing DSE operations.
+**Étape 2 — Bypass DSE :**
+Le driver vulnérable est utilisé pour modifier une variable d'application kernel. Cette inférence est appuyée par les chaînes d'erreur extraites référençant des opérations DSE.
 
-**Stage 3 — Custom driver loading:**
-A driver bearing a WDK test certificate is loaded. On a system where `testsigning` is disabled (confirmed via bcdedit), such a certificate would normally prevent loading. Its presence provides indirect evidence of a prior DSE bypass.
+**Étape 3 — Chargement du driver custom :**
+Un driver portant un certificat WDK de test est chargé. Sur un système où `testsigning` est désactivé (confirmé via bcdedit), un tel certificat empêcherait normalement le chargement. Sa présence constitue une preuve indirecte d'un bypass DSE préalable.
 
-**Stage 4 — Cleanup:**
-Vulnerable driver file deleted from disk. Service entries set to DISABLED.
+**Étape 4 — Nettoyage :**
+Fichier du driver vulnérable supprimé du disque. Entrées de service mises en DISABLED dans le registre.
 
-*Specific driver names, IOCTL codes, and kernel addresses are omitted.*
-
----
-
-## 6. Custom Driver Sample
-
-### 6.1 Authenticode signature
-
-The custom `.sys` files carry the following signature:
-
-```
-Certificate type : WDK Test Certificate (development use only)
-Common Name      : "WDKTestCert [pseudonym], [serial]"
-```
-
-A WDK test certificate is self-signed and intended for development only. Windows rejects such certificates unless the system is in test signing mode or DSE has been bypassed. The Common Name field contains a developer pseudonym — an operational security failure constituting an attribution indicator.
-
-### 6.2 VirusTotal result
-
-SHA-256 submitted to VirusTotal: **0 detections across 72 engines** at time of submission.
-
-This is a point-in-time observation. It does not imply permanent evasion capability, and detection rates may change following vendor notification.
-
-*Hash omitted from this public write-up.*
+*Noms précis des drivers, codes IOCTL et adresses kernel omis.*
 
 ---
 
-## 7. Physical Memory Access
+## 6. Sample du driver custom
 
-### 7.1 Context
+### 6.1 Signature Authenticode
 
-The binary targets a process protected by a commercial anti-cheat solution operating primarily in user-mode, monitoring standard Windows memory access APIs.
+Les fichiers `.sys` custom portent la signature suivante (résumée) :
 
-### 7.2 Indicators
+```
+Type de certificat : WDK Test Certificate (usage développement uniquement)
+Common Name        : "WDKTestCert [pseudonyme], [numéro de série]"
+```
 
-The following strings suggest physical memory access techniques. **These were not confirmed through direct runtime observation.**
+Un WDKTestCert est auto-signé et généré localement avec le Windows Driver Kit. Il est destiné exclusivement au développement. Windows refuse les drivers portant ce type de certificat sauf si le système est en mode test signing ou si le DSE a été bypassé. Le champ Common Name contient un pseudonyme de développeur — une défaillance de sécurité opérationnelle constituant un indicateur d'attribution.
+
+### 6.2 Résultat VirusTotal
+
+Hash SHA-256 soumis à VirusTotal : **0 détection sur 72 moteurs** au moment de la soumission.
+
+Il s'agit d'une observation ponctuelle. Elle n'implique pas une capacité d'évasion permanente, et le taux de détection peut évoluer suite aux notifications transmises aux éditeurs.
+
+*Hash omis de ce document public.*
+
+---
+
+## 7. Accès mémoire physique
+
+### 7.1 Contexte
+
+Le binaire semble ciblé sur un processus protégé par une solution anti-cheat commerciale opérant principalement en user-mode, surveillant les APIs Windows standard d'accès mémoire.
+
+### 7.2 Indicateurs observés
+
+Les chaînes suivantes extraites du dump suggèrent des techniques d'accès mémoire physique. **Celles-ci n'ont pas été confirmées par observation directe à l'exécution.**
 
 ```
 [DRIVER] BruteforceCR3: FOUND CR3=0x%llX
@@ -210,76 +210,77 @@ The following strings suggest physical memory access techniques. **These were no
 PsGetProcessSectionBaseAddress
 ```
 
-**CR3:** Holds the physical base address of the page directory for the active process. Enumerating CR3 values is a documented technique for locating a target process's physical memory without using monitored virtual memory APIs (see: Spookware, VDM, and related prior art in public kernel research).
+**Registre CR3 :** En architecture x86-64, le registre CR3 contient l'adresse physique de base du répertoire de pages du processus actif. L'énumération des valeurs CR3 est une technique documentée pour localiser l'espace mémoire physique d'un processus cible sans utiliser les APIs mémoire virtuelle surveillées.
 
-**MmMapIoSpaceEx:** Maps a physical address range into virtual address space. Use here, in conjunction with CR3 enumeration, is consistent with physical memory reading documented in public security research.
+**MmMapIoSpaceEx :** API kernel Windows mappant une plage d'adresses physiques en espace d'adressage virtuel, normalement utilisée pour l'accès matériel. Son usage ici, combiné à une approche d'énumération CR3, est cohérent avec des techniques de lecture mémoire physique documentées dans la littérature de recherche en sécurité.
 
-**PsGetProcessSectionBaseAddress:** Returns a process executable base address, used to locate the target in memory.
+**PsGetProcessSectionBaseAddress :** Retourne l'adresse de base de l'image exécutable d'un processus, utilisée pour localiser le processus cible en mémoire.
 
-### 7.3 Assessment
+### 7.3 Évaluation
 
-If implemented as suggested, this approach operates entirely in kernel-mode and would not generate user-mode API calls monitored by the observed anti-cheat solution. However, this was **not confirmed through direct runtime observation**.
+Si implémentée comme suggéré par les chaînes extraites, cette approche opèrerait entièrement en kernel-mode et ne générerait pas les appels API user-mode surveillés par la solution anti-cheat observée. Toutefois, **cela n'a pas été confirmé par observation directe à l'exécution**.
 
 ---
 
-## 8. Attribution Indicators
+## 8. Indicateurs d'attribution
 
-No active OSINT or account enumeration was conducted. Two passive indicators were identified:
+Aucune investigation active (OSINT, énumération de comptes) n'a été conduite. Deux indicateurs passifs ont été identifiés :
 
-| Indicator type | Observation |
+| Type d'indicateur | Observation |
 |---|---|
-| PDB path in binary | Developer pseudonym A embedded in filesystem path of a compiled component |
-| Authenticode CN | Developer pseudonym B used to generate the WDK test certificate |
+| Chemin PDB dans le binaire | Pseudonyme A : composant "GDRVLoader" compilé sur un bureau personnel |
+| Common Name Authenticode | Pseudonyme B : certificat WDK de test généré par le développeur du driver |
 
-A two-person development effort is suggested, though a single developer using multiple pseudonyms cannot be excluded.
+Un développement à deux personnes est suggéré, bien qu'un développeur unique utilisant plusieurs pseudonymes ne puisse être exclu.
 
-*Full pseudonyms reserved for private disclosure report.*
-
----
-
-## 9. Limitations
-
-- **Runtime execution was incomplete.** The license gate prevented full execution. Kernel driver loading and physical memory access were not directly observed. Conclusions in sections 5 and 7 are inferences.
-- **Partial memory coverage.** The dump covers PE image sections only. Heap and stack were not captured.
-- **No kernel debugging.** Driver behavior is inferred from extracted strings, not observed execution.
-- **Single sample, single execution.** Behavior may vary across versions or system configurations.
-- **VirusTotal snapshot.** Detection rate reflects a single point in time.
+*Pseudonymes complets réservés au rapport de divulgation privé.*
 
 ---
 
-## 10. Summary of Findings
+## 9. Limites de l'analyse
 
-| Finding | Confidence | Basis |
+- **Exécution incomplète.** La validation de licence a empêché l'exécution complète. Le chargement des drivers et l'accès mémoire physique n'ont pas été observés directement. Les conclusions des sections 5 et 7 sont des inférences.
+- **Couverture mémoire partielle.** Le dump couvre uniquement les sections PE. La heap et la stack n'ont pas été capturées.
+- **Absence de débogage kernel.** Le comportement du driver est inféré depuis des chaînes extraites, non depuis une exécution observée.
+- **Sample unique, exécution unique.** Le comportement peut varier selon les versions ou configurations système.
+- **Instantané VirusTotal.** Le taux de détection reflète un moment précis dans le temps.
+
+---
+
+## 10. Synthèse des découvertes
+
+| Découverte | Niveau de confiance | Base |
 |---|---|---|
-| VMProtect obfuscation | High | Static analysis |
-| Multi-layer anti-debug | High | Dynamic observation |
-| Memory dump — 21 MB, 23,700+ strings | High | Direct artifact |
-| C2 domain identified | High | DNS cache |
-| .sys files in %TEMP% | High | Filesystem |
-| Kernel driver services in registry | High | Registry |
-| WDKTestCert with developer pseudonym | High | Authenticode |
-| 0/72 VirusTotal at submission | High | VT report |
-| DSE bypass | Medium | Indirect — testsigning=No + WDKTestCert loaded |
-| BYOVD chain | Medium | String artifacts + registry |
-| Physical memory access | Medium | String artifacts — not runtime confirmed |
-| Two-developer attribution | Low-Medium | PDB path + certificate CN |
+| Obfuscation VMProtect | Élevé | Analyse statique |
+| Anti-debug multicouche | Élevé | Observation dynamique |
+| Dump mémoire — 21 MB, 23 700+ chaînes | Élevé | Artefact direct |
+| Domaine C2 identifié | Élevé | Cache DNS |
+| Fichiers .sys dans %TEMP% | Élevé | Système de fichiers |
+| Services driver kernel dans le registre | Élevé | Registre |
+| WDKTestCert avec pseudonyme développeur | Élevé | Signature Authenticode |
+| 0/72 VirusTotal à la soumission | Élevé | Rapport VirusTotal |
+| Bypass DSE | Moyen | Indirect — testsigning=No + WDKTestCert chargé |
+| Chaîne BYOVD | Moyen | Artefacts chaînes + registre |
+| Accès mémoire physique | Moyen | Artefacts chaînes uniquement — non confirmé à l'exécution |
+| Attribution deux développeurs | Faible-Moyen | Chemin PDB + CN certificat |
 
 ---
 
 ## 11. Responsible Disclosure
 
-Findings were disclosed to the affected vendor including full technical indicators omitted here. AV vendors were notified for signature creation.
+Les découvertes ont été transmises à l'éditeur concerné, incluant les indicateurs techniques complets omis ici. Les éditeurs antivirus ont été notifiés pour création de signatures de détection.
 
 ---
 
-## References
+## Références
 
-- LOLDrivers project — loldrivers.io
-- MITRE ATT&CK: T1014 (Rootkit), T1068, T1562.001
-- Microsoft documentation: Driver Signature Enforcement, WDK Test Certificates
-- VDM / physical memory reading prior art — public kernel research community
+- Projet LOLDrivers — loldrivers.io — Base de données des drivers vulnérables
+- MITRE ATT&CK : T1014 (Rootkit), T1068, T1562.001
+- Microsoft — Documentation Driver Signature Enforcement, WDK Test Certificates
+- Recherche publique sur la lecture mémoire physique via CR3/MmMapIoSpaceEx
 
 ---
 
-*(c) 2026 Clovis Lagorce — lagorceclovis@gmail.com*
-*Reproduction prohibited without written authorization.*
+*© 2026 Clovis Lagorce — lagorceclovis@gmail.com*
+*Reproduction interdite sans autorisation écrite.*
+*IDA Free · x64dbg · ScyllaHide · PowerShell · Python · VirusTotal*
